@@ -10,30 +10,39 @@ class raid5
 {
 	public:
 		raid5(const size_t stripe = 32 * 1024):
-			m_stripe(stripe),
+			m_stripe_size(stripe),
+			m_stripe_lba(stripe / sector_size),
 			m_count(0),
+			m_physical_size(0),
+			m_logical_size(0),
+			m_physical_lba(0),
+			m_logical_lba(0),
 			m_physical_sequence(0),
 			m_logical_sequence(0)
 		{
 
 		}
 
-		size_t count() const
-		{
-			return m_count;
-		}
-
-		size_t size()
-		{
-			if (m_drives.size())
-			{
-				return m_drives.front()->size() * (m_drives.size() - 1);
-			}
-			return 0;
-		}
+		size_t count() const { return m_count; }
+		size_t physical_size() const { return m_physical_size; }
+		size_t logical_size() const { return m_logical_size; }
+		size_t physical_lba() const { return m_physical_lba; }
+		size_t logical_lba() const { return m_logical_lba; }
 
 		void add(drive &drv)
 		{
+			/* Check sector boundary */
+			if (drv.size() % sector_size)
+			{
+				throw std::runtime_error("Drive size out of sector boundary!");
+			}
+
+			/* Check stripe boundary */
+			if (drv.size() % m_stripe_size)
+			{
+				throw std::runtime_error("Drive size out of stripe boundary!");
+			}
+
 			if (m_drives.size())
 			{
 				size_t size = m_drives.front()->size();
@@ -47,46 +56,75 @@ class raid5
 			calculate();
 		}
 
+		size_t physical(size_t lba, std::uint8_t *data)
+		{
+			size_t stripe_index = lba / m_stripe_lba;
+			size_t stripe_lba = lba % m_stripe_lba;
+			size_t stripe_block = stripe_index / m_count;
+			size_t drive = stripe_index % m_count;
+			size_t physical_lba = (stripe_lba + stripe_block * m_stripe_lba);
+
+			std::cout << std::setw(4) << lba << std::setw(4) << physical_lba << std::setw(4) << stripe_index << std::setw(4) << drive<< std::endl;
+
+			return m_drives[drive]->read(physical_lba, data);
+		}
+
+		size_t read(size_t lba, std::uint8_t *data)
+		{
+			size_t stripe_lba = lba / m_stripe_lba;
+			size_t stripe_index = lba % m_stripe_lba;
+
+			size_t logical_lba, drive, stripe;
+			map(stripe_lba, logical_lba, drive, stripe);
+
+			size_t drive_lba = stripe * m_stripe_lba + stripe_index;
+
+		//	std::cout << std::setw(4) << lba << std::setw(4) << stripe_lba << std::setw(4) << logical_lba << std::setw(4) << drive << std::setw(4) << drive_lba << std::endl;
+
+			return m_drives[drive]->read(drive_lba, data);
+		}
+
+		/**
+		 * @brief Check parity of each stripe/sector/byte
+		 * @return false on error, true on success
+		 */
 		bool check()
 		{
-			constexpr size_t count = 128;
-
-			std::uint8_t buffer[m_drives.size()][count];
-
-			size_t index = 0;
-			for (drive *drv: m_drives)
+			std::vector< std::vector<std::uint8_t> > buffer;
+			buffer.resize(m_count);
+			for (size_t index = 0; index < m_count; index++)
 			{
-				drv->read(buffer[index++], count);
+				buffer[index].resize(sector_size);
 			}
 
 			bool result = true;
-			for (size_t index = 0; index < count; index++)
+			for (size_t logical_lba = 0; logical_lba < m_physical_lba && result; logical_lba++)
 			{
-				std::uint8_t parity = 0;
-				std::cout << std::hex << std::setfill('0');
-				for (size_t drv_index = 0; drv_index < m_drives.size(); drv_index++)
-				{
-					std::cout << "0x" << std::setw(2) << (int)buffer[drv_index][index] << " ";
-					parity ^= buffer[drv_index][index];
-				}
-				std::cout << "- 0x" << std::setw(2) << (int)parity << std::dec << std::endl;
+				size_t drive = logical_lba % m_count;
+				size_t physical_lba = logical_lba / m_count;
 
-				if (parity)
+				m_drives[drive]->read(physical_lba, &buffer[drive][0]);
+
+				/* Last drive of raid -> check */
+				if (drive == m_count - 1)
 				{
-					result = false;
+					for (size_t index = 0; index < sector_size; index++)
+					{
+						std::uint8_t parity = 0;
+						for (size_t drive = 0; drive < m_count; drive++)
+						{
+							parity ^= buffer[drive][index];
+						}
+
+						if (parity)
+						{
+							result = false;
+							break;
+						}
+					}
 				}
 			}
 			return result;
-		}
-
-		void lba(size_t index)
-		{
-
-		}
-
-		void disk(size_t index)
-		{
-
 		}
 
 		/**
@@ -106,12 +144,29 @@ class raid5
 			drive = logical % m_count;
 		}
 
+		void map2lba(size_t physical, size_t &logical, size_t &drive, size_t &stripe)
+		{
+			size_t physical_stripe = physical / m_logical_sequence;
+			size_t physical_drive = physical % m_logical_sequence;
+
+			logical = physical + physical_stripe * m_count + m_offset[physical_drive];
+			stripe = logical / m_count;
+			drive = logical % m_count;
+		}
+
 	protected:
-		const size_t m_stripe;
+		static constexpr size_t sector_size = 512;
+		const size_t m_stripe_size;
+		const size_t m_stripe_lba;
+
 		std::vector<drive *> m_drives;
 		std::vector<size_t> m_offset;
 
 		size_t m_count;
+		size_t m_physical_size;
+		size_t m_logical_size;
+		size_t m_physical_lba;
+		size_t m_logical_lba;
 		size_t m_physical_sequence;
 		size_t m_logical_sequence;
 
@@ -137,6 +192,18 @@ class raid5
 			m_offset.clear();
 
 			m_count = m_drives.size();
+			if (m_count)
+			{
+				m_physical_size = m_count * m_drives.front()->size();
+				m_logical_size = m_physical_size - m_drives.front()->size();
+			}
+			else
+			{
+				m_physical_size = 0;
+				m_logical_size = 0;
+			}
+			m_physical_lba = m_physical_size / sector_size;
+			m_logical_lba = m_logical_size / sector_size;
 			m_physical_sequence = m_count * m_count;
 			m_logical_sequence = m_physical_sequence - m_count;
 

@@ -19,11 +19,14 @@
 
 #include <ext2fs/ext2fs.h>
 
-#define TEST
 #define RAID
+#define MBR
+#define GPT
+#define EXT2
 #define PARTITION_
 
 #include <raidfuse/raid.hpp>
+#include <raidfuse/mbr.hpp>
 #include <raidfuse/gpt.hpp>
 
 std::ostream& operator<<(std::ostream& out, raidfuse::gpt::name_t name)
@@ -41,30 +44,114 @@ std::ostream& operator<<(std::ostream& out, raidfuse::gpt::name_t name)
 int main(int, char**)
 {
 #ifdef RAID
-	raidfuse::drive hdd0("raidfuse");
-	raidfuse::drive hdd1("raidfuse");
-	raidfuse::drive hdd2("raidfuse");
-	raidfuse::drive hdd3("raidfuse");
+	raidfuse::drive hdd0("/srv/benjamin/raid/dump4_hdd0.bin");
+	raidfuse::drive hdd1("/srv/benjamin/raid/dump3_hdd1.bin");
+	raidfuse::drive hdd2("/srv/benjamin/raid/dump2_hdd2.bin");
+	raidfuse::drive hdd3("/srv/benjamin/raid/dump1_hdd3.bin");
 
 	std::cout << "hdd0 size: " << hdd0.size() << std::endl;
 
-	raidfuse::raid5 raid;
+	raidfuse::raid5 raid(32 * 1024);
 	raid.add(hdd0);
 	raid.add(hdd1);
 	raid.add(hdd2);
 	raid.add(hdd3);
 
-	std::cout << "raid size: " << raid.size() << std::endl;
 	std::cout << "raid member count: " << raid.count() << std::endl;
+	std::cout << "raid physical size: " << raid.physical_size() << " Bytes" << std::endl;
+	std::cout << "raid logical size: " << raid.logical_size() << " Bytes" << std::endl;
+	std::cout << "raid physical LBA: " << raid.physical_lba() << " LBAs" << std::endl;
+	std::cout << "raid logical LBA: " << raid.logical_lba() << " LBAs" << std::endl;
 
 	for (size_t physical_stripe = 0; physical_stripe < 48; physical_stripe++)
 	{
 		size_t logical, drive, stripe;
-		raid.map(physical_stripe, logical, drive, stripe);
-		std::cout << std::setw(2) << physical_stripe << " " << std::setw(2) << logical << " " << std::setw(2) << drive << " " << std::setw(2) << stripe << std::endl;
+		raid.map2lba(physical_stripe, logical, drive, stripe);
+	//	std::cout << std::setw(2) << physical_stripe << " " << std::setw(2) << logical << " " << std::setw(2) << drive << " " << std::setw(2) << stripe << std::endl;
 	}
 
-#ifdef XORCHECK
+#ifdef MBR
+	std::clog << "Checking MBR sector... " << std::flush;
+
+	raidfuse::mbr::mbr_t mbr;
+	if (!raid.read(0, (std::uint8_t *)&mbr))
+	{
+		throw std::runtime_error("MBR read error");
+	}
+
+	if (!mbr.valid())
+	{
+		throw std::runtime_error("MBR invalid");
+	}
+
+	std::clog << "OK" << std::endl;
+
+	int index = 0;
+	for (raidfuse::mbr::partition_t &partition: mbr.partition)
+	{
+		std::cout << "Partition " << (index++) << ": " << partition.sector_start << " - " << partition.sector_count << " (0x" << std::hex << (int)partition.type << std::dec << ")" << std::endl;
+	}
+#endif
+
+#ifdef GPT
+	std::clog << "Checking GPT sector... " << std::flush;
+
+	raidfuse::gpt::header_t header;
+	if (!raid.read(1, (std::uint8_t *)&header))
+	{
+		throw std::runtime_error("GPT header read error");
+	}
+
+	if (!header.valid())
+	{
+		throw std::runtime_error("GPT header invalid");
+	}
+
+	std::clog << "OK" << std::endl;
+
+	std::cout << "[GPT header]" << std::endl;
+	std::cout << "Header size: " << header.size << std::endl;
+	std::cout << "Header checksum: 0x" << std::hex << header.crc << std::dec << std::endl;
+	std::cout << std::endl;
+	std::cout << "First header: " << header.offset_this << std::endl;
+	std::cout << "Backup header: " << header.offset_backup << std::endl;
+	std::cout << "First LBA: " << header.first_lba << std::endl;
+	std::cout << "Last LBA: " << header.first_lba << std::endl;
+
+	std::cout << "UUID:" << std::hex;
+	for (std::uint8_t &item: header.uuid)
+	{
+		std::cout << " 0x" << (int)item;
+	}
+	std::cout << std::dec << std::endl;
+
+	std::cout << "Partition start LBA: " << header.partition_lba << std::endl;
+	std::cout << "Partition count: " << header.partition_count << std::endl;
+	std::cout << "Partition size: " << header.partition_size << std::endl;
+	std::cout << "Partition checksum: 0x" << std::hex << header.partition_crc << std::dec << std::endl;
+	std::cout << std::endl;
+
+	raidfuse::gpt::entry_t entry[4];
+	if (!raid.read(2, (std::uint8_t *)entry))
+	{
+		throw std::runtime_error("GPT entry read error");
+	}
+
+	for (int i = 0; i < 4; i++)
+	{
+		std::cout << "[GPT entry #" << i << "]" << std::endl;
+
+		std::cout << "Type: " << entry[i].type << std::endl;
+		std::cout << "Partition: " << entry[i].partition << std::endl;
+		std::cout << "Start: " << entry[i].start << std::endl;
+		std::cout << "End: " << entry[i].end << std::endl;
+		std::cout << "Attribute: " << entry[i].attribute << std::endl;
+		std::cout << "Name: " << entry[i].name << std::endl;
+		std::cout << std::endl;
+	}
+#endif
+
+#ifdef PARITY_CHECK
 	if (raid.check())
 	{
 		std::cout << "Check passed" << std::endl;
@@ -76,93 +163,12 @@ int main(int, char**)
 	std::cout << std::endl;
 #endif
 
-#endif
-
-#ifdef PARTITION
-	FILE *handle;
-//	handle = fopen("/dev/sda", "rb");
-	handle = fopen("/srv/benjamin/raid/dump4_hdd0.bin", "rb");
-	if (!handle)
-	{
-		printf("Error: Can not open file\n");
-		return EXIT_FAILURE;
-	}
-
-	mbr_t mbr;
-	fread(&mbr, sizeof(mbr_t), 1, handle);
-
-
-
-	int index = 0;
-	for (partition_t &partition: mbr.partition)
-	{
-		std::cout << "Partition " << (index++) << ": " << partition.sector_start << " - " << partition.sector_count << " (0x" << std::hex << (int)partition.type << std::dec << ")" << std::endl;
-	}
-
-	gpt_header_t gpt_header;
-	fread(&gpt_header, sizeof(gpt_header_t), 1, handle);
-
-	if ((memcmp(gpt_header.signature, "EFI PART", sizeof(gpt_header.signature))) || (gpt_header.revision != 0x00010000) || (gpt_header.reserved_0))
-	{
-		std::cerr << "GPT header not found!" << std::endl;
-	}
-
-	std::cout << "[GPT header]" << std::endl;
-	std::cout << "Header size: " << gpt_header.size << std::endl;
-	std::cout << "Header checksum: 0x" << std::hex << gpt_header.crc << std::dec << std::endl;
-	std::cout << std::endl;
-	std::cout << "First header: " << gpt_header.offset_this << std::endl;
-	std::cout << "Backup header: " << gpt_header.offset_backup << std::endl;
-	std::cout << "First LBA: " << gpt_header.first_lba << std::endl;
-	std::cout << "Last LBA: " << gpt_header.first_lba << std::endl;
-
-	std::cout << "UUID:" << std::hex;
-	for (std::uint8_t &item: gpt_header.uuid)
-	{
-		std::cout << " 0x" << (int)item;
-	}
-	std::cout << std::dec << std::endl;
-
-	std::cout << "Partition start LBA: " << gpt_header.partition_lba << std::endl;
-	std::cout << "Partition count: " << gpt_header.partition_count << std::endl;
-	std::cout << "Partition size: " << gpt_header.partition_size << std::endl;
-	std::cout << "Partition checksum: 0x" << std::hex << gpt_header.partition_crc << std::dec << std::endl;
-	std::cout << std::endl;
-
-	gpt_entry_t gpt_entry;
-
-	for (int i = 0; i < 8; i++)
-	{
-		std::cout << "[GPT entry #" << i << "]" << std::endl;
-		fread(&gpt_entry, sizeof(gpt_entry_t), 1, handle);
-		std::cout << "Type: " << gpt_entry.type << std::endl;
-		std::cout << "Partition: " << gpt_entry.partition << std::endl;
-		std::cout << "Start: " << gpt_entry.start << std::endl;
-		std::cout << "End: " << gpt_entry.end << std::endl;
-		std::cout << "Attribute: " << gpt_entry.attribute << std::endl;
-		std::cout << "Name: " << gpt_entry.name << std::endl;
-		std::cout << std::endl;
-	}
-
-#endif
-
-
 #ifdef EXT2
-	FILE *handle;
-	handle = fopen("/dev/sda5", "rb");
-	if (!handle)
-	{
-		printf("Error: Can not open file\n");
-		return EXIT_FAILURE;
-	}
-//	printf("Handle = %i\n", (long unsigned)handle);
-	fseek(handle, 0x400, SEEK_SET);
-
-	char buffer[255];
-//	tm time = ctime()
-
 	ext2_super_block block;
-	printf("Read = %lu\n", fread(&block, sizeof(ext2_super_block), 1, handle));
+	if (!raid.read(36, (std::uint8_t *)&block))
+	{
+		throw std::runtime_error("EXT2 superblock read error");
+	}
 
 	printf("Total inode count: %d\n", block.s_inodes_count);
 	printf("Total block count: %d\n", block.s_blocks_count);
@@ -183,8 +189,8 @@ int main(int, char**)
 	printf("Number of mounts since the last fsck: %d\n", block.s_mnt_count);
 	printf("Number of mounts beyond which a fsck is needed: %d\n", block.s_max_mnt_count);
 	printf("Magic = 0x%.4X\n", block.s_magic);
+#endif
 
-	fclose(handle);
 #endif
 	return EXIT_SUCCESS;
 }

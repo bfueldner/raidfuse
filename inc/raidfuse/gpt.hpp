@@ -25,6 +25,12 @@ struct __attribute__((packed)) header_t
 	std::uint32_t partition_size;
 	std::uint32_t partition_crc;
 	std::uint8_t space[420];
+
+	bool valid()
+	{
+		return !memcmp(signature, "EFI PART", sizeof(signature)) && (revision == 0x00010000) && (!reserved_0);
+
+	}
 };
 static_assert(sizeof(header_t) == 512, "Size of GPT header mismatch!");
 
