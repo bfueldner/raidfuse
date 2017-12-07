@@ -17,6 +17,8 @@
 #include <string>
 #include <vector>
 
+#include <raidfuse/drive.hpp>
+
 static const char *hello_str = "Hello World!\n";
 static const char *hello_path = "/hello";
 

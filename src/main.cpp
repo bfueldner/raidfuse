@@ -3,6 +3,8 @@
  *
  * @see https://de.wikipedia.org/wiki/Master_Boot_Record
  * @see https://de.wikipedia.org/wiki/GUID_Partition_Table
+ *
+ * http://libfuse.github.io/doxygen/
  */
 
 #include <stdio.h>
@@ -10,106 +12,20 @@
 
 #include <iostream>
 #include <iomanip>
+#include <vector>
 
 #include <cstdint>
 #include <cmath>
 
 #include <ext2fs/ext2fs.h>
 
-#include <fuse.h>
-
+#define RAID
 #define PARTITION_
 
-static constexpr std::uint8_t safety_mbr = 0xEE;
-static constexpr std::uint8_t efi_partition = 0xEF;
+#include <raidfuse/raid.hpp>
+#include <raidfuse/gpt.hpp>
 
-typedef std::uint8_t guid_t[16];
-typedef std::uint16_t name_t[36];
-
-struct __attribute__((packed)) partition_t
-{
-	std::uint8_t boot;
-	std::uint8_t chs_start[3];
-	std::uint8_t type;
-	std::uint8_t chs_end[3];
-	std::uint32_t sector_start;
-	std::uint32_t sector_count;
-};
-static_assert(sizeof(partition_t) == 16, "Size of partition mismatch!");
-
-struct __attribute__((packed)) mbr_t
-{
-	std::uint8_t bootloader[440];
-	std::uint32_t drive_signature;
-	std::uint16_t null;
-	partition_t partition[4];
-	std::uint16_t sector_signature;
-};
-static_assert(sizeof(mbr_t) == 512, "Size of MBR mismatch!");
-
-struct __attribute__((packed)) gpt_header_t
-{
-	std::uint8_t signature[8];
-	std::uint32_t revision;
-	std::uint32_t size;
-	std::uint32_t crc;
-	std::uint32_t reserved_0;
-	std::uint64_t offset_this;
-	std::uint64_t offset_backup;
-	std::uint64_t first_lba;
-	std::uint64_t last_lba;
-	std::uint8_t uuid[16];
-	std::uint64_t partition_lba;
-	std::uint32_t partition_count;
-	std::uint32_t partition_size;
-	std::uint32_t partition_crc;
-	std::uint8_t space[420];
-};
-static_assert(sizeof(gpt_header_t) == 512, "Size of GPT header mismatch!");
-
-struct __attribute__((packed)) gpt_entry_t
-{
-	guid_t type;
-	guid_t partition;
-	std::uint64_t start;
-	std::uint64_t end;
-	std::uint64_t attribute;
-	name_t name;
-};
-static_assert(sizeof(gpt_entry_t) == 128, "Size of GPT entry mismatch!");
-
-std::ostream& operator<<(std::ostream& out, guid_t guid)
-{
-	out << std::hex;
-	for (int index = 0; index < 4; index++)
-	{
-		out << std::setfill('0') << std::setw(2) << (int)guid[3 - index];
-	}
-	out << "-";
-	for (int index = 0; index < 2; index++)
-	{
-		out << std::setfill('0') << std::setw(2) << (int)guid[5 - index];
-	}
-	out << "-";
-	for (int index = 0; index < 2; index++)
-	{
-		out << std::setfill('0') << std::setw(2) << (int)guid[7 - index];
-	}
-	out << "-";
-	for (int index = 0; index < 2; index++)
-	{
-		out << std::setfill('0') << std::setw(2) << (int)guid[index + 8];
-	}
-	out << "-";
-	for (int index = 0; index < 6; index++)
-	{
-		out << std::setfill('0') << std::setw(2) << (int)guid[index + 10];
-	}
-	out << std::dec;
-	return out;
-}
-
-std::ostream& operator<<(std::ostream& out, name_t name)
+std::ostream& operator<<(std::ostream& out, raidfuse::gpt::name_t name)
 {
 	for (int index = 0; index < 36; index++)
 	{
@@ -121,22 +37,49 @@ std::ostream& operator<<(std::ostream& out, name_t name)
 	return out;
 }
 
-
-static struct fuse_operations hello_oper =
-{
-	.init           = hello_init,
-	.getattr	= hello_getattr,
-	.readdir	= hello_readdir,
-	.open		= hello_open,
-	.read		= hello_read,
-};
-
-
 int main(int, char**)
 {
+#ifdef RAID
+	raidfuse::drive hdd0("/srv/benjamin/raid/dump4_hdd0.bin");
+	raidfuse::drive hdd1("/srv/benjamin/raid/dump3_hdd1.bin");
+	raidfuse::drive hdd2("/srv/benjamin/raid/dump2_hdd2.bin");
+	raidfuse::drive hdd3("/srv/benjamin/raid/dump1_hdd3.bin");
+
+	std::cout << hdd0.size() << std::endl;
+
+	raidfuse::raid5 raid;
+	raid.add(hdd0);
+	raid.add(hdd1);
+	raid.add(hdd2);
+	raid.add(hdd3);
+
+	if (raid.check())
+	{
+		std::cout << "Check passed" << std::endl;
+	}
+	else
+	{
+		std::cerr << "Check failed" << std::endl;
+	}
+	std::cout << std::endl;
+
+	for (size_t index = 0; index < 24; index++)
+	{
+		raid.lba(index);
+	}
+	std::cout << std::endl;
+
+	for (size_t index = 0; index < 24; index++)
+	{
+		raid.disk(index);
+	}
+
+#endif
+
 #ifdef PARTITION
 	FILE *handle;
-	handle = fopen("/dev/sda", "rb");
+//	handle = fopen("/dev/sda", "rb");
+	handle = fopen("/srv/benjamin/raid/dump4_hdd0.bin", "rb");
 	if (!handle)
 	{
 		printf("Error: Can not open file\n");
@@ -146,10 +89,7 @@ int main(int, char**)
 	mbr_t mbr;
 	fread(&mbr, sizeof(mbr_t), 1, handle);
 
-	if ((mbr.null != 0) && (mbr.sector_signature != 0xAA55))
-	{
-		std::cerr << "MBR signature mismatch" << std::endl;
-	}
+
 
 	int index = 0;
 	for (partition_t &partition: mbr.partition)

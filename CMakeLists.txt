@@ -9,10 +9,11 @@ set(CMAKE_CXX_STANDARD 11)
 
 set(CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
 
-set(FUSE_DEBUG ON)
-find_package(FUSE REQUIRED)
+find_package(FUSE 2.9 REQUIRED)
 
 set(HEADER
+	${CMAKE_CURRENT_SOURCE_DIR}/inc/${PROJECT_NAME}/guid.hpp
+
 	${CMAKE_CURRENT_SOURCE_DIR}/inc/${PROJECT_NAME}/mbr.hpp
 	${CMAKE_CURRENT_SOURCE_DIR}/inc/${PROJECT_NAME}/gpt.hpp
 	${CMAKE_CURRENT_SOURCE_DIR}/inc/${PROJECT_NAME}/partition.hpp
@@ -22,12 +23,16 @@ set(HEADER
 )
 
 set(SOURCE
-	${CMAKE_CURRENT_SOURCE_DIR}/src/fuse.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/src/guid.cpp
+
+#	${CMAKE_CURRENT_SOURCE_DIR}/src/fuse.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp
 )
 
 if(FUSE_FOUND)
 	add_definitions(${FUSE_DEFINITIONS})
 	include_directories(${FUSE_INCLUDE_DIRS})
+	include_directories(${CMAKE_CURRENT_SOURCE_DIR}/inc)
 
 	add_executable(${PROJECT_NAME} ${HEADER} ${SOURCE})
 	target_link_libraries(${PROJECT_NAME} ${FUSE_LIBRARIES})
