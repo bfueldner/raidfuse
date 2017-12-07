@@ -19,6 +19,7 @@
 
 #include <ext2fs/ext2fs.h>
 
+#define TEST
 #define RAID
 #define PARTITION_
 
@@ -40,12 +41,12 @@ std::ostream& operator<<(std::ostream& out, raidfuse::gpt::name_t name)
 int main(int, char**)
 {
 #ifdef RAID
-	raidfuse::drive hdd0("/srv/benjamin/raid/dump4_hdd0.bin");
-	raidfuse::drive hdd1("/srv/benjamin/raid/dump3_hdd1.bin");
-	raidfuse::drive hdd2("/srv/benjamin/raid/dump2_hdd2.bin");
-	raidfuse::drive hdd3("/srv/benjamin/raid/dump1_hdd3.bin");
+	raidfuse::drive hdd0("raidfuse");
+	raidfuse::drive hdd1("raidfuse");
+	raidfuse::drive hdd2("raidfuse");
+	raidfuse::drive hdd3("raidfuse");
 
-	std::cout << hdd0.size() << std::endl;
+	std::cout << "hdd0 size: " << hdd0.size() << std::endl;
 
 	raidfuse::raid5 raid;
 	raid.add(hdd0);
@@ -53,6 +54,17 @@ int main(int, char**)
 	raid.add(hdd2);
 	raid.add(hdd3);
 
+	std::cout << "raid size: " << raid.size() << std::endl;
+	std::cout << "raid member count: " << raid.count() << std::endl;
+
+	for (size_t physical_stripe = 0; physical_stripe < 48; physical_stripe++)
+	{
+		size_t logical, drive, stripe;
+		raid.map(physical_stripe, logical, drive, stripe);
+		std::cout << std::setw(2) << physical_stripe << " " << std::setw(2) << logical << " " << std::setw(2) << drive << " " << std::setw(2) << stripe << std::endl;
+	}
+
+#ifdef XORCHECK
 	if (raid.check())
 	{
 		std::cout << "Check passed" << std::endl;
@@ -62,17 +74,7 @@ int main(int, char**)
 		std::cerr << "Check failed" << std::endl;
 	}
 	std::cout << std::endl;
-
-	for (size_t index = 0; index < 24; index++)
-	{
-		raid.lba(index);
-	}
-	std::cout << std::endl;
-
-	for (size_t index = 0; index < 24; index++)
-	{
-		raid.disk(index);
-	}
+#endif
 
 #endif
 

@@ -9,10 +9,18 @@ namespace raidfuse {
 class raid5
 {
 	public:
-		raid5(size_t stripe = 32 * 1024):
-			m_stripe(stripe)
+		raid5(const size_t stripe = 32 * 1024):
+			m_stripe(stripe),
+			m_count(0),
+			m_physical_sequence(0),
+			m_logical_sequence(0)
 		{
 
+		}
+
+		size_t count() const
+		{
+			return m_count;
 		}
 
 		size_t size()
@@ -36,6 +44,7 @@ class raid5
 			}
 
 			m_drives.push_back(&drv);
+			calculate();
 		}
 
 		bool check()
@@ -72,40 +81,78 @@ class raid5
 
 		void lba(size_t index)
 		{
-			size_t mod_4 = index % m_drives.size();
-			size_t div_4 = index / m_drives.size();
-			size_t div_mod_4 = div_4 % m_drives.size();
 
-			size_t pos = m_drives.size() - div_mod_4 - 1;
-
-			if (mod_4 == pos)
-			{
-				std::cout << std::setw(2) << index << " " << mod_4 << " " << div_4 << " " << div_mod_4 << " " << pos << " parity" << std::endl;
-			}
-			else
-			{
-				std::cout << std::setw(2) << index << " " << mod_4 << " " << div_4 << " " << div_mod_4 << " " << pos << std::endl;
-			}
 		}
 
 		void disk(size_t index)
 		{
-			size_t mod_4 = index % m_drives.size();
-			size_t div_4 = index / m_drives.size();
-			size_t div_mod_4 = div_4 % m_drives.size();
 
-			size_t mod_3 = index % (m_drives.size() - 1);
-			size_t div_3 = index / (m_drives.size() - 1);
-		//	size_t div_mod_4 = div_4 % m_drives.size();
+		}
 
-			size_t pos = m_drives.size() - div_mod_4 - 1;
+		/**
+		 * @brief Map physical stripes to logical stripes
+		 * @param physical
+		 * @param logical
+		 * @param drive
+		 * @param lba
+		 */
+		void map(size_t physical, size_t &logical, size_t &drive, size_t &stripe)
+		{
+			size_t physical_stripe = physical / m_logical_sequence;
+			size_t physical_drive = physical % m_logical_sequence;
 
-			std::cout << std::setw(2) << index << " " << mod_4 << " " << div_4 << " " << div_mod_4 << " " << pos << " " << mod_3 << " " << div_3 << " (" << (index + div_3) << ")" << std::endl;
+			logical = physical + physical_stripe * m_count + m_offset[physical_drive];
+			stripe = logical / m_count;
+			drive = logical % m_count;
 		}
 
 	protected:
+		const size_t m_stripe;
 		std::vector<drive *> m_drives;
-		size_t m_stripe;
+		std::vector<size_t> m_offset;
+
+		size_t m_count;
+		size_t m_physical_sequence;
+		size_t m_logical_sequence;
+
+		/**
+		 * @brief Check, if selected stripe is a parity stripe
+		 * @param stripe
+		 * @return
+		 */
+		bool is_parity_stripe(size_t stripe) const
+		{
+			size_t drive_number = stripe % m_count;
+			size_t drive_lba = stripe / m_count;
+			size_t parity_drive = m_count - (drive_lba % m_count) - 1;
+
+			return (drive_number == parity_drive);
+		}
+
+		/**
+		 * @brief Calculate stripe offset table
+		 */
+		void calculate()
+		{
+			m_offset.clear();
+
+			m_count = m_drives.size();
+			m_physical_sequence = m_count * m_count;
+			m_logical_sequence = m_physical_sequence - m_count;
+
+			int value = 0;
+			for (size_t stripe = 0; stripe < m_physical_sequence; stripe++)
+			{
+				if (is_parity_stripe(stripe))
+				{
+					value++;
+				}
+				else
+				{
+					m_offset.push_back(value);
+				}
+			}
+		}
 };
 
 }
