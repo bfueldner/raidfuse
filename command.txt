@@ -1,0 +1,7 @@
+sudo build/raidfuse -s -f mount/
+
+sudo gdisk mount/raid
+sudo dumpe2fs mount/partition
+sudo e2fsck -n mount/partition
+
+sudo mount -t ext3 -o loop,ro,noload ./mount/partition ./ext/

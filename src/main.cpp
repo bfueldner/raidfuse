@@ -133,12 +133,19 @@ int raid_read(const char *path, char *buf, size_t size, off_t offset, struct fus
 
 	if (strcmp(path, raid_file) == 0)
 	{
-		std::clog << "read: offset = " << offset << ", size = " << size << std::endl;
+	//	std::clog << "read: offset = " << offset << ", size = " << size << std::endl;
 
-		if (offset + size > raid.logical_size())
+		if (offset >= raid.size())
 		{
-			std::cerr << " End of disk!" << std::endl;
+			std::cerr << "End of disk!" << std::endl;
 			return 0;
+		}
+
+		if (offset + size > raid.size())
+		{
+			std::clog << "read: raid = " << raid.size() << ", offset = " << offset << ", size = " << size << std::endl;
+			size = raid.size() - offset;
+			std::clog << "Resize to size = " << size << std::endl;
 		}
 
 		size_t test_offset = offset % sector_size;
@@ -155,7 +162,7 @@ int raid_read(const char *path, char *buf, size_t size, off_t offset, struct fus
 
 		while (lba_size)
 		{
-			std::clog << "      lba = " << lba_offset << std::endl;
+		//	std::clog << "      lba = " << lba_offset << std::endl;
 			raid.read(lba_offset, (std::uint8_t *)buf);
 
 			buf += sector_size;
@@ -167,12 +174,19 @@ int raid_read(const char *path, char *buf, size_t size, off_t offset, struct fus
 	else
 	if (strcmp(path, partition_file) == 0)
 	{
-		std::clog << "read: offset = " << offset << ", size = " << size << std::endl;
+	//	std::clog << "read: offset = " << offset << ", size = " << size << std::endl;
+
+		if (offset >= part->size())
+		{
+			std::cerr << "End of partition!" << std::endl;
+			return 0;
+		}
 
 		if (offset + size > part->size())
 		{
-			std::cerr << " End of partition!" << std::endl;
-			return 0;
+			std::clog << "read: partition = " << part->size() << ", offset = " << offset << ", size = " << size << std::endl;
+			size = part->size() - offset;
+			std::clog << "Resize to size = " << size << std::endl;
 		}
 
 		size_t test_offset = offset % sector_size;
@@ -189,7 +203,7 @@ int raid_read(const char *path, char *buf, size_t size, off_t offset, struct fus
 
 		while (lba_size)
 		{
-			std::clog << "      lba = " << lba_offset << std::endl;
+		//	std::clog << "      lba = " << lba_offset << std::endl;
 			part->read(lba_offset, (std::uint8_t *)buf);
 
 			buf += sector_size;
@@ -226,10 +240,10 @@ fuse_operations fuse_callback;
 int main(int argc, char** argv)
 {
 #ifdef RAID
-	raidfuse::drive hdd0("/srv/benjamin/raid/dump4_hdd0.bin");
-	raidfuse::drive hdd1("/srv/benjamin/raid/dump3_hdd1.bin");
-	raidfuse::drive hdd2("/srv/benjamin/raid/dump2_hdd2.bin");
-	raidfuse::drive hdd3("/srv/benjamin/raid/dump1_hdd3.bin");
+	raidfuse::drive hdd0("/dev/sda");
+	raidfuse::drive hdd1("/dev/sdb");
+	raidfuse::drive hdd2("/dev/sdc");
+	raidfuse::drive hdd3("/dev/sdd");
 
 	std::cout << "hdd0 size: " << hdd0.size() << std::endl;
 

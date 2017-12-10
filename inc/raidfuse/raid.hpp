@@ -41,7 +41,7 @@ class raid5:
 			/* Check stripe boundary */
 			if (drv.size() % m_stripe_size)
 			{
-				throw std::runtime_error("Drive size out of stripe boundary!");
+			//	throw std::runtime_error("Drive size out of stripe boundary!");
 			}
 
 			if (m_drives.size())
@@ -85,7 +85,7 @@ class raid5:
 
 			size_t drive_lba = stripe * m_stripe_lba + stripe_index;
 
-			std::cout << std::setw(4) << lba << std::setw(4) << stripe_lba << std::setw(4) << logical_lba << std::setw(4) << drive << std::setw(4) << drive_lba << std::endl;
+		//	std::cout << std::setw(4) << lba << std::setw(4) << stripe_lba << std::setw(4) << logical_lba << std::setw(4) << drive << std::setw(4) << drive_lba << std::endl;
 
 			return m_drives[drive]->read(drive_lba, data);
 		}
