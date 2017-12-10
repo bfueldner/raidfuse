@@ -6,7 +6,8 @@
 
 namespace raidfuse {
 
-class raid5
+class raid5:
+	public interface::drive
 {
 	public:
 		raid5(const size_t stripe = 32 * 1024):
@@ -29,7 +30,7 @@ class raid5
 		size_t physical_lba() const { return m_physical_lba; }
 		size_t logical_lba() const { return m_logical_lba; }
 
-		void add(drive &drv)
+		void add(raidfuse::drive &drv)
 		{
 			/* Check sector boundary */
 			if (drv.size() % sector_size)
@@ -69,7 +70,12 @@ class raid5
 			return m_drives[drive]->read(physical_lba, data);
 		}
 
-		size_t read(size_t lba, std::uint8_t *data)
+		virtual size_t size()
+		{
+			return m_logical_size;
+		}
+
+		virtual size_t read(size_t lba, std::uint8_t *data)
 		{
 			size_t stripe_lba = lba / m_stripe_lba;
 			size_t stripe_index = lba % m_stripe_lba;
@@ -79,7 +85,7 @@ class raid5
 
 			size_t drive_lba = stripe * m_stripe_lba + stripe_index;
 
-		//	std::cout << std::setw(4) << lba << std::setw(4) << stripe_lba << std::setw(4) << logical_lba << std::setw(4) << drive << std::setw(4) << drive_lba << std::endl;
+			std::cout << std::setw(4) << lba << std::setw(4) << stripe_lba << std::setw(4) << logical_lba << std::setw(4) << drive << std::setw(4) << drive_lba << std::endl;
 
 			return m_drives[drive]->read(drive_lba, data);
 		}
@@ -155,11 +161,10 @@ class raid5
 		}
 
 	protected:
-		static constexpr size_t sector_size = 512;
 		const size_t m_stripe_size;
 		const size_t m_stripe_lba;
 
-		std::vector<drive *> m_drives;
+		std::vector<raidfuse::drive *> m_drives;
 		std::vector<size_t> m_offset;
 
 		size_t m_count;

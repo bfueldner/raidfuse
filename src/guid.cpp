@@ -30,6 +30,6 @@ std::ostream& operator<<(std::ostream& out, raidfuse::guid_t guid)
 	{
 		out << std::setfill('0') << std::setw(2) << (int)guid[index + 10];
 	}
-	out << std::dec;
+	out << std::dec << std::setfill(' ');
 	return out;
 }

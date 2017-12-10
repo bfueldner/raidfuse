@@ -7,6 +7,8 @@
  * http://libfuse.github.io/doxygen/
  */
 
+#define FUSE_USE_VERSION 29
+
 #include <stdio.h>
 #include <time.h>
 
@@ -19,6 +21,8 @@
 
 #include <ext2fs/ext2fs.h>
 
+#include <fuse.h>
+
 #define RAID
 #define MBR
 #define GPT
@@ -28,6 +32,7 @@
 #include <raidfuse/raid.hpp>
 #include <raidfuse/mbr.hpp>
 #include <raidfuse/gpt.hpp>
+#include <raidfuse/partition.hpp>
 
 std::ostream& operator<<(std::ostream& out, raidfuse::gpt::name_t name)
 {
@@ -41,7 +46,184 @@ std::ostream& operator<<(std::ostream& out, raidfuse::gpt::name_t name)
 	return out;
 }
 
-int main(int, char**)
+static const char *raid_file = "/raid";
+static const char *partition_file = "/partition";
+
+raidfuse::raid5 raid(256 * 1024);
+raidfuse::partition *part;
+//std::vector<raidfuse::partition *> paritions;
+
+int raid_getattr(const char *path, struct stat *stbuf)
+{
+	int res = 0;
+
+	memset(stbuf, 0, sizeof(struct stat));
+	if (strcmp(path, "/") == 0)
+	{
+		stbuf->st_mode = S_IFDIR | 0755;
+		stbuf->st_nlink = 2;
+	}
+	else
+	if (strcmp(path, raid_file) == 0)
+	{
+		stbuf->st_mode = S_IFREG | 0444;
+		stbuf->st_nlink = 1;
+		stbuf->st_size = raid.size();
+		stbuf->st_atime = 0;
+	}
+	else
+	if (strcmp(path, partition_file) == 0)
+	{
+		stbuf->st_mode = S_IFREG | 0444;
+		stbuf->st_nlink = 1;
+		stbuf->st_size = part->size();
+		stbuf->st_atime = 0;
+	}
+	else
+		res = -ENOENT;
+
+	return res;
+}
+
+int raid_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi)
+{
+	(void) offset;
+	(void) fi;
+
+	if (strcmp(path, "/") != 0)
+	{
+		return -ENOENT;
+	}
+
+	filler(buf, ".", NULL, 0);
+	filler(buf, "..", NULL, 0);
+	filler(buf, raid_file + 1, NULL, 0);
+	filler(buf, partition_file + 1, NULL, 0);
+
+/*
+	for (std::string &entry: entries)
+	{
+		filler(buf, entry.c_str(), NULL, 0);
+	}
+*/
+
+	return 0;
+}
+
+int raid_open(const char *path, struct fuse_file_info *fi)
+{
+	if ((strcmp(path, raid_file) != 0) && (strcmp(path, partition_file) != 0))
+	{
+		return -ENOENT;
+	}
+
+	if ((fi->flags & 3) != O_RDONLY)
+	{
+		return -EACCES;
+	}
+	return 0;
+}
+
+int raid_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
+{
+	constexpr size_t sector_size = 512;
+
+	size_t len;
+	(void) fi;
+
+	if (strcmp(path, raid_file) == 0)
+	{
+		std::clog << "read: offset = " << offset << ", size = " << size << std::endl;
+
+		if (offset + size > raid.logical_size())
+		{
+			std::cerr << " End of disk!" << std::endl;
+			return 0;
+		}
+
+		size_t test_offset = offset % sector_size;
+		size_t test_size = size % sector_size;
+
+		if ((test_offset) || (test_size))
+		{
+			std::cerr << "Out of bound!" << std::endl;
+			return 0;
+		}
+
+		size_t lba_offset = offset / sector_size;
+		size_t lba_size = size / sector_size;
+
+		while (lba_size)
+		{
+			std::clog << "      lba = " << lba_offset << std::endl;
+			raid.read(lba_offset, (std::uint8_t *)buf);
+
+			buf += sector_size;
+			lba_offset++;
+			lba_size--;
+		}
+
+	}
+	else
+	if (strcmp(path, partition_file) == 0)
+	{
+		std::clog << "read: offset = " << offset << ", size = " << size << std::endl;
+
+		if (offset + size > part->size())
+		{
+			std::cerr << " End of partition!" << std::endl;
+			return 0;
+		}
+
+		size_t test_offset = offset % sector_size;
+		size_t test_size = size % sector_size;
+
+		if ((test_offset) || (test_size))
+		{
+			std::cerr << "Out of bound!" << std::endl;
+			return 0;
+		}
+
+		size_t lba_offset = offset / sector_size;
+		size_t lba_size = size / sector_size;
+
+		while (lba_size)
+		{
+			std::clog << "      lba = " << lba_offset << std::endl;
+			part->read(lba_offset, (std::uint8_t *)buf);
+
+			buf += sector_size;
+			lba_offset++;
+			lba_size--;
+		}
+	}
+	else
+	{
+		return -ENOENT;
+	}
+
+
+
+/*
+	len = strlen(hello_str);
+	if (offset < len)
+	{
+		if (offset + size > len)
+		{
+			size = len - offset;
+		}
+		memcpy(buf, hello_str + offset, size);
+	}
+	else
+		size = 0;
+*/
+
+	return size;
+}
+
+fuse_operations fuse_callback;
+
+int main(int argc, char** argv)
 {
 #ifdef RAID
 	raidfuse::drive hdd0("/srv/benjamin/raid/dump4_hdd0.bin");
@@ -51,7 +233,7 @@ int main(int, char**)
 
 	std::cout << "hdd0 size: " << hdd0.size() << std::endl;
 
-	raidfuse::raid5 raid(32 * 1024);
+//	raidfuse::raid5 raid(32 * 1024);
 	raid.add(hdd0);
 	raid.add(hdd1);
 	raid.add(hdd2);
@@ -147,6 +329,17 @@ int main(int, char**)
 		std::cout << "End: " << entry[i].end << std::endl;
 		std::cout << "Attribute: " << entry[i].attribute << std::endl;
 		std::cout << "Name: " << entry[i].name << std::endl;
+
+		if ((entry[i].start) && (entry[i].end))
+		{
+			part = new raidfuse::partition(raid, "partition", entry[i].start, entry[i].end);
+
+		/*
+			raidfuse::partition *partition = new raidfuse::partition(raid, "partition", entry[i].start, entry[i].end);
+			paritions.push_back(partition);
+		*/
+		//	paritions.push_back({ raid, "partition", entry[i].start, entry[i].end });
+		}
 		std::cout << std::endl;
 	}
 #endif
@@ -192,5 +385,16 @@ int main(int, char**)
 #endif
 
 #endif
-	return EXIT_SUCCESS;
+	fuse_callback.getattr = raid_getattr;
+	fuse_callback.readdir = raid_readdir;
+	fuse_callback.open = raid_open;
+	fuse_callback.read = raid_read;
+
+/*
+	entries.push_back("disk");
+	entries.push_back("partition1");
+	entries.push_back("partition2");
+*/
+	return fuse_main(argc, argv, &fuse_callback, NULL);
+//	return EXIT_SUCCESS;
 }
